@@ -7,7 +7,7 @@ use crate::distribution::{Distribution, DistributionBuilder};
 use crate::formatting::{key_to_parts, write_metric_line};
 use crate::registry::GenerationalAtomicStorage;
 
-use metrics::{Counter, Gauge, Histogram, Key, KeyName, Recorder, SharedString, Unit};
+use metrics::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit};
 use metrics_util::registry::{Recency, Registry};
 
 use indexmap::IndexMap;
@@ -51,7 +51,7 @@ impl Inner {
             }
 
             let (name, labels) = key_to_parts(&key, Some(&self.global_tags));
-            let value = f64::from_bits(gauge.get_inner().swap(0, Ordering::Acquire));
+            let value = f64::from_bits(gauge.get_inner().load(Ordering::Acquire));
             let entry = gauges
                 .entry(name)
                 .or_insert_with(HashMap::new)
@@ -103,9 +103,6 @@ impl Inner {
         for (name, mut by_labels) in counters.drain() {
             let mut wrote = false;
             for (labels, value) in by_labels.drain() {
-                if value == 0 {
-                    continue;
-                }
                 wrote = true;
                 write_metric_line::<&str, u64>(
                     &mut output,
@@ -128,9 +125,6 @@ impl Inner {
         for (name, mut by_labels) in gauges.drain() {
             let mut wrote = false;
             for (labels, value) in by_labels.drain() {
-                if value == 0.0 {
-                    continue;
-                }
                 wrote = true;
                 write_metric_line::<&str, f64>(
                     &mut output,
@@ -156,9 +150,6 @@ impl Inner {
                 let (sum, count) = match distribution {
                     Distribution::Summary(summary, quantiles, sum) => {
                         let count = summary.count();
-                        if count == 0 {
-                            continue;
-                        }
                         wrote = true;
                         let snapshot = summary.snapshot(Instant::now());
                         for quantile in quantiles.iter() {
@@ -192,9 +183,6 @@ impl Inner {
                     }
                     Distribution::Histogram(histogram) => {
                         let count = histogram.count();
-                        if count == 0 {
-                            continue;
-                        }
                         wrote = true;
                         for (le, count) in histogram.buckets() {
                             write_metric_line(
@@ -319,19 +307,19 @@ impl Recorder for StatsdRecorder {
     fn describe_gauge(&self, _k: KeyName, _u: Option<Unit>, _d: SharedString) {}
     fn describe_histogram(&self, _k: KeyName, _u: Option<Unit>, _d: SharedString) {}
 
-    fn register_counter(&self, key: &Key) -> Counter {
+    fn register_counter(&self, key: &Key, _metadata: &Metadata<'_>) -> Counter {
         self.inner
             .registry
             .get_or_create_counter(key, |c| c.clone().into())
     }
 
-    fn register_gauge(&self, key: &Key) -> Gauge {
+    fn register_gauge(&self, key: &Key, _metadata: &Metadata<'_>) -> Gauge {
         self.inner
             .registry
             .get_or_create_gauge(key, |c| c.clone().into())
     }
 
-    fn register_histogram(&self, key: &Key) -> Histogram {
+    fn register_histogram(&self, key: &Key, _metadata: &Metadata<'_>) -> Histogram {
         self.inner
             .registry
             .get_or_create_histogram(key, |c| c.clone().into())
